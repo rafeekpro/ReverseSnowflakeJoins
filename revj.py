@@ -22,7 +22,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."""
 
-
+import functools
 import re, sys, tempfile
 from pyparsing import *
 from constants import *
@@ -77,7 +77,7 @@ class MultipleSelectsException(Exception):
 class MallformedSQLException(Exception):
 	"""obviously bad SQL"""
 	pass
-	
+
 class REVJProcessingException(Exception):
 	"""revj bugs"""
 	pass
@@ -87,7 +87,7 @@ class NaturalJoinException(Exception):
 	"""select * from table1 natural join table 2
 	no info on columns"""
 	pass
-	
+
 def keywordFromList(l):
 	return eval(
 		" | ".join(['Keyword("%s", caseless=True)' % x
@@ -100,7 +100,7 @@ def keywordParensFromList(l):
 
 """grammar is hard to read if it is polluted by self.*
 Another alternative is to have these at top level ... """
-def initGlobalGrammar():		
+def initGlobalGrammar():
 	#MySQL speciffic, add others later
 	globals()["aggregatesAsList"] = ('avg bit_and bit_or bit_xor count '
 		'group_concat '
@@ -109,22 +109,22 @@ def initGlobalGrammar():
 		'sum var varp var_pop var_samp variance').split(' ')
 	globals()["aggregatesRe"] = "_[0-9]+_agg"
 	globals()["aggregates"] = Regex(aggregatesRe)
-	
+
 	globals()["reserved"] = \
 		('select from where group having order and or not null exists is as ' +
-		'in asc desc ' + 
+		'in asc desc ' +
 		'by on inner outer left right full cross join using ' +
-		'case when then end ' + 
+		'case when then end ' +
 		'distinct limit ' +
 		'separator').split(' ') + aggregatesAsList
-	
-	#no params + not even parens 
-	globals()["funcsNoParensAsList"] = ["current_date", "sysdate", "rownum"]	
+
+	#no params + not even parens
+	globals()["funcsNoParensAsList"] = ["current_date", "sysdate", "rownum"]
 	#no params with parens
 	globals()["funcsNoParamsAsList"] = funcsNoParensAsList + \
 		["curdate", "pi", "random"]
 	globals()["funcsNoParams"] = keywordParensFromList(funcsNoParamsAsList)
-		
+
 	globals()["arithSign"] = Word("+-",exact=1)
 	globals()["intNum"] = Regex("[\+\-]?\d+")
 	globals()["realNum"] = Regex("[\+\-]?(\d+\.\d*|\.\d+)")
@@ -140,7 +140,7 @@ def initGlobalGrammar():
 
 	globals()["dot"] = Literal(".")
 	globals()["comma"] = Literal(",")
-	
+
 	"""	|| doesn't work with oneOf """
 	binop_ = "+ - * / % ^ & | ~"
 	globals()["binopAsList"] = binop_.split()
@@ -157,7 +157,7 @@ def initGlobalGrammar():
 	globals()["_like"] = Keyword('like', caseless=True)
 	globals()["not_like"] = Keyword(NOT_LIKE, caseless=True)
 	globals()["compar"] = oneOf(
-			"!= !> !< <> <= >= ^= /= += -= %= &= |= #= =# #=# = < >") | \
+			"!= !> !< != <= >= ^= /= += -= %= &= |= #= =# #=# = < >") | \
 		not_in_equal | in_equal | not_between_equal | between_equal | \
 		_like | not_like
 
@@ -191,21 +191,21 @@ def initGlobalGrammar():
 	globals()["preFiltersJoins"] =  _on | _and | _or | "(" | ","
 	globals()["postJoins"] =  _and | _or | _allJoins | ")" | _where | \
 		_group | _order | _semicolon
-		
+
 	#same with regex-es only
 	globals()["reWS"] = r"\s*"
 	globals()["reBetweenParens"] = r"(?P<inner>[^()]+)"
-	globals()["rePre"]  = r"(?P<pre>[(+=<>#,]|and|or|select|where|by|having)\s*"
-	globals()["rePost"] = r"(?P<post>[)+=<>#,]|and|or|from|where|group|order|having)\s*"
+	globals()["rePre"]  = r"(?P<pre>[(+=!=#,]|and|or|select|where|by|having)\s*"
+	globals()["rePost"] = r"(?P<post>[)+=!=#,]|and|or|from|where|group|order|having)\s*"
 	globals()["ReColumnNameNoStar"] = \
 		r"(?P<col>[0-9_$@]*[a-zA-Z][a-zA-Z0-9_$@\.]*)"
 
 	reConst = r"('_____[0-9]+'"
 	for c in funcsNoParamsAsList:
-		reConst += "|" + c + r"\s*\(\s*\)"		
+		reConst += "|" + c + r"\s*\(\s*\)"
 	globals()["reConst"] = reConst + ')'
-	globals()["reCompar"] = r"[+=<>#]+"
-	
+	globals()["reCompar"] = r"[+=!=#]+"
+
 
 	#*? = non-greedy matching
 	globals()["quotedConst"] = Regex("'.*?'")
@@ -222,19 +222,19 @@ def initGlobalGrammar():
 	globals()["filterConst"] = intNum | quotedConst | \
 		Group(ident + Literal("(") + Literal(")") ) | \
 		bind
-		
+
 	globals()["inConstruct"] = "(" + reCompar + "|" + r"\s" + '[iI][nN]' + reWS + ")"
 	globals()["reInSubselect"] = ReColumnNameNoStar + reWS + inConstruct + \
 			reWS + r"\[" + reWS + r"(?P<nr>[0-9]+)" + \
 			reWS + r"\]"
-			
+
 	globals()["reSubselectAlias"] = r"\[" + reWS + r"(?P<nr>[0-9]+)" + \
 			reWS + r"\]" + reWS + ReColumnNameNoStar
-			
+
 	globals()["reSubselectNoAlias"] = r"\[" + reWS + r"(?P<nr>[0-9]+)" + \
 			reWS + r"\]"
-			
-		
+
+
 class BadParensException(Exception):
 	""" this is reporting confusing error because processed SQL is
 	different than original"""
@@ -244,12 +244,12 @@ class BadIdentException(Exception):
 	""" this is reporting confusing error because processed SQL is
 	different than original"""
 	pass
-	
+
 class AmbiguousColumnException(Exception):
 	"""in case there are more tables it is needed to use field.alias
 	in SQL it is not important, but revj has no idea about fields from tables"""
 	pass
-	
+
 
 """count parens and quotes"""
 class SanityChecker:
@@ -264,29 +264,29 @@ class SanityChecker:
 			elif c == closingP:
 				cnt -= 1
 			if cnt < 0:
-				#you can show where the extra ')' is 
+				#you can show where the extra ')' is
 				raise BadParensException('Too many closed \\%s in [%s]'%
 					(closingP, s[:p]))
 		if cnt != 0:
-			raise BadParensException('Too many opened \\%s in [%s]' % 
+			raise BadParensException('Too many opened \\%s in [%s]' %
 				(openingP, s))
 		return True
-		
+
 	def quoteCounter(self, s, q):
 		return sum([1 for x in s if x == q])
-		
-	def checkParens(self, s):			
+
+	def checkParens(self, s):
 		if self.quoteCounter(s, '"') % 2 != 0:
 			raise BadParensException('Unbalanced double quotes ')
-			
-		#next quote checks not working ???		
+
+		#next quote checks not working ???
 		if self.quoteCounter(s, "'") % 2 != 0:
 			raise BadParensException('Unbalanced quotes' )
-			
+
 		res = self.checkParensHelper(s, '(', ')')
 		res = res and self.checkParensHelper(s, '{', '}')
 		res = res and self.checkParensHelper(s, '[', ']')
- 
+
 		return res
 
 """inside quotes there can be extra parens, sql keywords, functions,
@@ -306,7 +306,7 @@ class QuoteRemover(SanityChecker):
 	"""call this before each new SQL parsing!"""
 	def reset(self):
 		self.quotedConsts = {}
-		
+
 	def removeComments(self, s):
 		multilineCmt = re.compile('/\*.*?\*/' , re.DOTALL)
 		res = multilineCmt.sub(' ', s)
@@ -314,9 +314,9 @@ class QuoteRemover(SanityChecker):
 		res = res.strip() + "\n"  #easier search for final end of line comment
 		#remove end of line comments ex: --bla bla
 		res = re.sub("\-\-.*\\n", ' ', res)
-		res = res.strip()		
+		res = res.strip()
 		return res
-			
+
 	"""remove stuff that is SQL dialect speciffic 
 		and irrelevant to the diagram"""
 	def removeUnknown(self, s):
@@ -327,76 +327,76 @@ class QuoteRemover(SanityChecker):
 		res = self.removeCaseWhen(res)
 		res = self.removeSelectDistinct(res)
 		return res
-	
+
 	def removeMySQLdialect(self, s):
 		return re.sub('\sSEPARATOR\s', ',', s, re.IGNORECASE)
-			
+
 	def removePGdialect(self, s):
 		pgTypes = 'bigint bigserial bit boolean bytea char character date ' + \
 			'enum double int4 int8 integer numeric oid ' + \
 			'serial text time timestamp varchar xml'
-			
+
 		res = s
 		#drop the type
 		for k in pgTypes.split(' '):
 			res = res.replace('::'+k, '::')
-			
+
 		#drop the optional length specifier
 		res = re.sub('::\s*\(\s*\d*\s*\)', '::', res)
-		
+
 		#drop the '::'
-		res =  res.replace('::', '')		
-		
+		res =  res.replace('::', '')
+
 		#drop the slicing operator x[2] or x[2:4]
- 		res = re.sub(r"\[[0-9]+(:[0-9]+)?\]", '', res)
-		
+		res = re.sub(r"\[[0-9]+(:[0-9]+)?\]", '', res)
+
 		return res
-				
+
 	def removeMSdialect(self, s):
 		res = s
 		p = re.compile('\s*with\(\s*nolock\s*\)',  re.IGNORECASE)
-		res = p.sub(' ', res) 
+		res = p.sub(' ', res)
 		return res
-		
+
 	def removeCast(self, s):
 		castTypes = 'bigint bigserial bit boolean bytea char character date ' + \
 			'enum double int4 int8 integer numeric oid ' + \
 			'serial text time timestamp varchar xml'
-			
+
 		res = s
-		
+
 		for k in castTypes.split(' '):
 			res = re.sub('as\s+%s' % k, '', res)
-			
+
 		return res
-		
+
 	"""select distinct is not relevant to the join diagram. surprise.. """
 	def removeSelectDistinct(self, s):
 		res = s
 		p = re.compile('select\s*distinct',  re.IGNORECASE)
-		res = p.sub('select ', res) 
+		res = p.sub('select ', res)
 		return res
-		
+
 	def removeCaseWhen(self, s):
 		rePat = re.compile(r"case\s+when", re.IGNORECASE)
 		res = re.sub(rePat, ' ', s)
-		
+
 		for c in "when then else".split():
 			rePat = re.compile(
-				r'(?P<pre>[ (])%s(?P<post>[ )])' 
+				r'(?P<pre>[ (])%s(?P<post>[ )])'
 				% c, re.IGNORECASE)
-				
+
 			res = re.sub(rePat, '\g<pre> , \g<post>', res, re.IGNORECASE)
-			
+
 		for c in "case end".split():
 			rePat = re.compile(
-				r'(?P<pre>[ (])%s(?P<post>[ )])' 
+				r'(?P<pre>[ (])%s(?P<post>[ )])'
 				% c, re.IGNORECASE)
-				
+
 			res = re.sub(rePat, '\g<pre>  \g<post>', res, re.IGNORECASE)
-		
+
 		return res
-		
+
 
 	""" could have been a function;
 		but it is confusing to have funcs and methods called *Quote*
@@ -417,7 +417,7 @@ class QuoteRemover(SanityChecker):
 			x = long_x
 		d = self.quotedConsts
 		if x in d:
-			#function is called over and over. Constant is replaced in SQL 
+			#function is called over and over. Constant is replaced in SQL
 			#if done == it is having integer key
 			assert int(str(d[x])) == d[x]
 			return " '%s%d' " % (QUOTESYMBOL, d[x])
@@ -475,7 +475,7 @@ class QuoteRemover(SanityChecker):
 
 		res = bc.transformString(res)
 		return res
-		
+
 	def removeNOTLike(self, s):
 		notLike = re.compile('not\slike' , re.DOTALL + re.IGNORECASE)
 		return notLike.sub(NOT_LIKE, s)
@@ -484,36 +484,36 @@ class QuoteRemover(SanityChecker):
 		sb = Literal("[") + columnName.setResultsName('inner') + Literal("]")
 		sb.setParseAction(lambda x: '"' + x.inner + '"' )
 		res = sb.transformString(s)
-				
+
 		return res
-		
+
 	def removeTrueFalse(self, s):
-		rePat = "(?P<pre>[ *+-/=#<>&|(){}%])" +  r"true" + \
-			"(?P<post>[ *+-/=#<>&|(){}%;])"
+		rePat = "(?P<pre>[ *+-/=#!=&|(){}%])" +  r"true" + \
+			"(?P<post>[ *+-/=#!=&|(){}%;])"
 		res = re.sub(rePat, '\g<pre> 1 \g<post>', s, re.IGNORECASE)
-		
-		rePat = "(?P<pre>[ *+-/=#<>&|(){}%])" +  r"false" + \
-			"(?P<post>[ *+-/=#<>&|(){}%;])"
+
+		rePat = "(?P<pre>[ *+-/=#!=&|(){}%])" +  r"false" + \
+			"(?P<post>[ *+-/=#!=&|(){}%;])"
 
 		res = re.sub(rePat, '\g<pre> 0 \g<post>', res, re.IGNORECASE)
 
 		return res
-		
+
 	#append extra parens to funcs without params and without parens
 	def replaceFuncsNoParens(self, s):
 		res = s
 		for f in funcsNoParensAsList:
 			rePat = "(?!=[a-z0-9_$@])(%s)(?!=[a-z0-9_$@])" % f
 			res = re.sub(rePat, '\g<1>()', res, re.IGNORECASE)
-			
+
 		return res
-			
-		
+
+
 	def removeCurlyBraces(self, s):
 		sb = Literal("{") + columnName.setResultsName('inner') + Literal("}")
 		sb.setParseAction(lambda x: x.inner)
 		res = sb.transformString(s)
-				
+
 		return res
 
 	def restoreConst(self, s):
@@ -543,11 +543,11 @@ class QuoteRemover(SanityChecker):
 
 		quotedIdent.setParseAction(lambda x: x.inner.replace(' ', '$'*5))
 		res = quotedIdent.transformString(s)
-		
+
 		#this includes "" and \"
 		if '"' in res:
 			raise BadParensException('Unbalanced double quotes in [%s]' % s)
-		
+
 		return res
 
 	def removeUTF(self, s):
@@ -571,40 +571,40 @@ class QuoteRemover(SanityChecker):
 		#do this only after removing end-of-line comments !!!
 		#for multi-line SQL
 		res = re.sub("[\n\r\t]", ' ', res)
-		
+
 		#high priority MySQL specific backquoting for column aliases
 		res = res.replace('`', '"')
-		
+
 		#remove cast
 		res = self.removeCast(res)
 
-		#MS SQL specific quoting for aliases 
+		#MS SQL specific quoting for aliases
 		res = self.removeSquareBrackets(res)
-		
+
 		#dollar substitution. Remove braces, keep dollar
 		res = self.removeCurlyBraces(res)
-		
+
 		res = self.removeUTF(res)
 		res = self.removeQuoteEscapes(res)
 		res = self.removeTrueFalse(res)
-		
+
 		#IN clause
 		res = self.removeInClause(res)
-		
-		
+
+
 		#BETWEEN clause
 		res = self.removeBetween(res)
-		
+
 		res = self.removeNOTLike(res)
-		
-		#replace 'systime' with 'systime()' == that already works 
+
+		#replace 'systime' with 'systime()' == that already works
 		res = self.replaceFuncsNoParens(res)
 
 		#remove stuff irrelevant to diagrams
 		res = self.removeUnknown(res)
-		
+
 		res = self.removeConst(res)
-		
+
 		res = self.removeQuotedIdent(res)
 
 		#there can be parens inside quotes
@@ -627,23 +627,23 @@ class Simplifier:
 	def reduceBinops(self, s):
 		""" || is not oneOf() because is more chars"""
 		res = s.replace('||', '+')
-			
+
 		before = identNoStarChars + "\'\)"
 		after = identNoStarChars + "\'\("
 		letterOpLetter = "([%s])[ ]*[%s][ ]*([%s])" % \
 			(before, "\\".join(binopAsList), after)
 		res = re.sub(letterOpLetter, r"\1 + \2", res, re.DOTALL)
-			
+
 		return res
-		
-	
+
+
 	def distinctAggregsHelper(self, x):
 		aggToReplace = aggregatesAsList.index(x.agg)
-		if x.dist <> '':
-			aggToReplace += AGG_DISTINCT 
+		if x.dist != '':
+			aggToReplace += AGG_DISTINCT
 		res = x.pre + " _%d_agg(" % aggToReplace
-		return res		
-	
+		return res
+
 	""" there are a lot of aggregation funcs. This slows parsing 
 	replace sum(x) with 0__agg(x) """
 	def replaceAggregs(self, s):
@@ -651,12 +651,12 @@ class Simplifier:
 		agExpr = (preFiltersJoins | select | _from).setResultsName('pre') + \
 			origAggregates.setResultsName('agg') + Literal("(") + \
 			Optional(Keyword('distinct', caseless=True)).setResultsName('dist')
-			
+
 		agExpr.setParseAction(lambda x: self.distinctAggregsHelper(x) )
-		
+
 		res = agExpr.transformString(s)
 		return res
-		
+
 	""" (+) looks as an expression in parens and is reduced"""
 	def reduceOuterJoin(self, s):
 		loj = (Literal("(") + "+" + ")" + "=") | \
@@ -669,7 +669,7 @@ class Simplifier:
 
 		oj = loj | roj
 		return oj.transformString(s)
-		
+
 	"""chop sql into small pieces"""
 	def smallChunksGen(all):
 		crtPos = 0
@@ -683,18 +683,18 @@ class Simplifier:
 					yield all[crtPos:pos+1]
 					crtPos = pos+1
 		yield all[crtPos:]
-		
+
 	def runRemoversOnChunks(self, removers, s):
 		res = []
 		for piece in smallChunksGen(s):
 			res.append(self.runRemovers(removers, piece))
-			
+
 		res = ' '.join(res)
 		return res
 		#once more on the whole thing ?
 		#return self.runRemovers(res)
-			
-		
+
+
 	def runRemovers(self, removers, s):
 		x = s
 		change = True
@@ -705,7 +705,7 @@ class Simplifier:
 				less CPU intensive with re than pyparsing"""
 				x = re.sub("\s+", ' ', x)
 				x = re.sub("\s*([\+\,])\s*", r"\1", x)
-				
+
 				x = self.runRegexRemoverConstantOps(x)
 				x = self.runRegexRemoverParensInExpressions(x)
 				x = self.runRegexRemoverConstEqualConst(x)
@@ -713,64 +713,64 @@ class Simplifier:
 				newX = r.transformString(x)
 				change = change or (newX != x)
 				x = newX
-					
+
 		x = x.replace('select+from', 'select * from')
 
 		assert s.islower()
 		#test against dropping space after "pre"
-		assert x.startswith('select ')			
+		assert x.startswith('select ')
 
 		return x
-		
+
 	def runRegexRemoverConstantOps(self, s):
 		"""remove constant expressions"""
-		
-		#commas are needed ex for '..., 2008 as year, ..' 				
+
+		#commas are needed ex for '..., 2008 as year, ..'
 		# + const -> ' '
 		rePat = r"\+" + reWS + reConst
 		res = re.sub(rePat, ' ', s)
-		
-		# , const ,  -> 
+
+		# , const ,  ->
 		#why this is not handled by previous ??
 		#rePat2 = r"[,]"  + reWS + reConst + r"[,]"
 		#res = re.sub(rePat2, ' + ', res)
-		
+
 		# pre const +  -> pre
 		rePat3 = rePre  + reConst + reWS + r"[+,]"
 		res = re.sub(rePat3, '\g<pre> ', res)
-		
+
 		# , const ) -> )
 		rePat4 = r"[+,]" + reWS + reConst + reWS + r"[)]"
 		res = re.sub(rePat4, ')', res)
-		
+
 		return res
 
 	def runRegexRemoverParensInExpressions(self, s):
 		"""remove parens in expressions
-		CharsNotIn("()=<>") is needed to process later '*' = '*' """
+		CharsNotIn("()=!=") is needed to process later '*' = '*' """
 
-		rePat = rePre + reWS + r"\(" + r"(?P<inner>[^()=<>]*?)" + r"\)"
+		rePat = rePre + reWS + r"\(" + r"(?P<inner>[^()=!=]*?)" + r"\)"
 		res= re.sub(rePat, '\g<pre> \g<inner>', s)
 		return res
-		
+
 	def runRegexRemoverConstEqualConst(self, s):
 		"""remove "ALL" style filters generated by some reporting tools
 		Parens are needed to protect against matching: a + 'x' = 'y' + b """
-		
+
 		# ('*'='*' OR ..
 		rePat = r"\(" + reWS + reConst + reWS + reCompar + \
 			reWS + reConst + reWS + r"(and|or)"
 		res = re.sub(rePat, '(', s)
 		# .. OR '*' = '*')
 		rePat1 = r"(and|or)" + reWS + reConst + reWS + \
-			r"[+-*/=<>#]+" + reWS + reConst + r"\s*\)"
-			
+			r"[+-*/=!=#]+" + reWS + reConst + r"\s*\)"
+
 		res = re.sub(rePat, ')', res)
 		return res
-	
+
 	def buildRemovers(self):
 		constantVal = quotedConst | funcsNoParams
-		
+
 		plus_ = Literal('+')
 
 		expression = Combine(
@@ -783,7 +783,7 @@ class Simplifier:
 		aggFunc = aggregates + \
 			Literal('(') + \
 			columnName + \
-			Literal(')')			
+			Literal(')')
 		aggTerm = aggFunc | constantVal | columnName
 		binopComma = plus_ | comma
 		aggExpression = delimitedList(aggTerm, binopComma, combine=True)
@@ -794,7 +794,7 @@ class Simplifier:
 			Literal(')')
 		#Regex(r"[a-z0-9]+[^()]*(\([^()]*\))*[^()]*").setResultsName('inner') + \
 		func.setParseAction(lambda x: x.pre + " " + x.inner.replace(',', '+'))
-		self.removers.append(func)	
+		self.removers.append(func)
 
 
 	""" replace space in 'Group by' and 'Order by' with '_' """
@@ -821,21 +821,21 @@ class Simplifier:
 		self.buildRemovers()
 
 		res = self.runRemovers(self.removers, x)
-		
+
 		return self.reduceOrderGroup(res)
 
 
 def checkIdentifier(x):
-	return ( (x.lower() not in reserved) and 
-		(re.search(aggregatesRe, x) is None) and 
+	return ( (x.lower() not in reserved) and
+		(re.search(aggregatesRe, x) is None) and
 		not (x.startswith("'" + QUOTESYMBOL)) )
-	
+
 def addAliasIfOK(d, k, v):
 	if checkIdentifier(k) and checkIdentifier(v):
 		addAlias(d, k, v)
 
 """insert into d[k] = Set(.. v ..) """
-def addAlias(d, k, v):	
+def addAlias(d, k, v):
 	if k in d:
 		if v not in ['', None]:
 			d[k].add(v)
@@ -846,7 +846,7 @@ def addAlias(d, k, v):
 			temp = set()
 			temp.add(v)
 			d[k] = temp
-		
+
 """get table from table.field or schema.table.field"""
 def getFirstTwoDots(v):
 	temp = v.split(".")
@@ -867,7 +867,7 @@ def getLastDot(v):
 		return temp[-1]
 
 	raise MallformedSQLException('Too may dots in identifier: %s' % s)
-	
+
 def splitByCommasWithoutParens(s):
 	res = []
 	parenCnt = 0
@@ -881,16 +881,16 @@ def splitByCommasWithoutParens(s):
 		elif c == ',' and parenCnt == 0:
 			res.append( s[oldPos+1:pos].strip() )
 			oldPos = pos
-	
+
 	if s[oldPos] == ',':
 		oldPos += 1
-		
+
 	res.append(s[oldPos:].strip() )
-	
+
 	return res
-	
+
 def checkNotExpr(y):
-	return [z for z in y if z in "()+=<>' *"] == []
+	return [z for z in y if z in "()+=!=' *"] == []
 
 """Basic Select .. From .. Where.. Group by .. Order by .. ;
 -no subselects, no EXISTS, no UNION
@@ -907,14 +907,14 @@ class SingleSelect:
 		"""tableAliases has all tables . colAliases only aliases == inconsistent !!
 		"""
 		self.tableAliases = {}	#schema.table -> Set of aliases
-		self.parentTables = parentTables2	
+		self.parentTables = parentTables2
 		self.derivedTables = {} #alias -> index of subselect in the SQL Stack
 		self.subselects = {} #alias -> subselect
-		self.unions = [] # [ [union/union_all/.. , index of subselect]]		
-		
+		self.unions = [] # [ [union/union_all/.. , index of subselect]]
+
 		self.colAliases = {}	#tblAlias.field -> Set of aliases
 		self.projectionCols = set()	#alias or col, may be without table. prefix
-		self.exprAliases = set()	#tblAlias.colAlias 
+		self.exprAliases = set()	#tblAlias.colAlias
 		self.filters = {}		#tblAlias.field -> set( "= 1", "> 10"..)
 
 		#the outer join side is uppercase!
@@ -927,39 +927,39 @@ class SingleSelect:
 
 		#table.field. Collects all values from other dicts
 		self.columns = set()
-		
+
 		"""true if there is "select * .."
 		Used only to display * column in all tables"""
 		self.selectStar = False
 
-	def sanityCheckColumns(self):		
+	def sanityCheckColumns(self):
 		for r in reserved:
 			if r in self.columns:
 				raise REVJProcessingException("[%s] is a column name!" % r)
-				
+
 		for c in self.columns:
 			if c.startswith("'" + QUOTESYMBOL):
-				raise REVJProcessingException("[&s] is a constant, not column!" 
+				raise REVJProcessingException("[&s] is a constant, not column!"
 					% c)
-				
+
 	def checkAmbiguousColumns(self):
 		if len(self.tableAliases) == 1 and len(self.parentTables) == 0:
 			return
-			
+
 		for r in self.columns:
 			if (r not in self.exprAliases) and \
-				(r not in self.colAliases.values()) and \
+				(r not in list(self.colAliases.values())) and \
 				(r not in self.orders) and \
 				(r + ORDER_DESC_SUFFIX not in self.orders):
 				#aliases & orders are columns too, but have no table prefix !!
-				if len(r.split('.')) < 2 and r <> '*':
+				if len(r.split('.')) < 2 and r != '*':
 					raise AmbiguousColumnException(
 						"use table.field instead of %s!" % r)
 
 
 	"""subprocess* methods are called from process* methods"""
-	
-	
+
+
 	"""find all column names between select..from	
 	this is a method that processes everything that looks as column name .. """
 	def subprocessSelectColumns(self, s):
@@ -984,26 +984,26 @@ class SingleSelect:
 		m = re.search(aggPat, x.agg)
 		aggIdx = int( m.group('nr') )
 
-	
+
 		#add optional DISTINCT for '_1015_agg'
 		if aggIdx >= AGG_DISTINCT:
 			distinct = 'DISTINCT '
 			aggIdx -= AGG_DISTINCT
 		else:
 			distinct = ''
-		
+
 		"""need to use alias.field into self.aggregs and self.havings
 		later on, DotOutput will drop the "alias." """
-		
-		if x.comp <> '' and x.const <> '':
+
+		if x.comp != '' and x.const != '':
 			newComp = self.reverseComparisonSign(x)
-			addAliasIfOK(self.havings, x.inner, 
-				aggregatesAsList[aggIdx].upper() + 
-				"(" + distinct + x.inner + ")" + newComp + " " + 
+			addAliasIfOK(self.havings, x.inner,
+				aggregatesAsList[aggIdx].upper() +
+				"(" + distinct + x.inner + ")" + newComp + " " +
 				self.replaceConstsWithOrig(x.const))
 		else:
-			addAliasIfOK(self.aggregs, x.inner, 
-				aggregatesAsList[aggIdx].upper() + 
+			addAliasIfOK(self.aggregs, x.inner,
+				aggregatesAsList[aggIdx].upper() +
 				"(" + distinct + x.inner + ")")
 
 	"""SELECT .. FROM ; HAVING .. may contain aggregates
@@ -1025,10 +1025,10 @@ class SingleSelect:
 				")" +
 				Optional(compar.setResultsName("comp") +
 					filterConst.setResultsName("const") ) )
-		
+
 		agExpr.setParseAction( lambda x: self.aggregLambda(x) )
 		res = agExpr.transformString(s)
-		
+
 	"""sum(t.a * 100) belongs in table t"""
 	def findTableOfExpression(self, s):
 		cols = []
@@ -1036,17 +1036,17 @@ class SingleSelect:
 		pat = ReColumnNameNoStar + reWS + r'(?!\()'
 		for m in re.finditer(pat, s):
 			cols.append(m.group('col'))
-			
+
 		tbls = set([getFirstTwoDots(x) for x in cols])
 		try:
 			tbls.remove('')
 		except KeyError:
 			pass
-		
+
 		if len(tbls) == 1:
 			return tbls.pop() + '.'
-		return ''		
-	
+		return ''
+
 	""" find projected columns, some may have no table. prefix
 	find column as alias; one column may have multiple aliases
 	for complex expressions get only alias name
@@ -1057,24 +1057,24 @@ class SingleSelect:
 		for part in splitByCommasWithoutParens(s):
 			try:
 				(exprPart, aliasPart) = part.strip().rsplit(' ', 1)
-				
+
 				if ')' in aliasPart:
 					#for example count (distinct x)
 					raise ValueError	#fall thru no alias
-					
-					
+
+
 				exprPart = exprPart.strip()
 				if exprPart.endswith(' as'):
 					exprPart = exprPart[:-3]
-					
-				withoutAliases.append(exprPart)				
-				
+
+				withoutAliases.append(exprPart)
+
 				if checkIdentifier(aliasPart):
-					tbl = self.findTableOfExpression(exprPart)						
+					tbl = self.findTableOfExpression(exprPart)
 					self.projectionCols.add(tbl + aliasPart)
-										
+
 					if checkNotExpr(exprPart):
-						addAliasIfOK(self.colAliases, exprPart, aliasPart)					
+						addAliasIfOK(self.colAliases, exprPart, aliasPart)
 					else:
 						if tbl == '':
 							self.exprAliases.add(aliasPart)
@@ -1087,7 +1087,7 @@ class SingleSelect:
 				if checkNotExpr(part) and checkIdentifier(part):
 					self.projectionCols.add(part)
 				withoutAliases.append(part)
-			
+
 
 		x = ',' + ','.join(withoutAliases)	#easier grammar
 		self.subprocessSelectColumns(x)
@@ -1098,19 +1098,19 @@ class SingleSelect:
 	def replaceConstsWithOrig(self, c, quote = "'"):
 		if isinstance(c, list):
 			# functions with no params are constants too
-			# ['pi', '(', ')' ]			
+			# ['pi', '(', ')' ]
 			return c
-			
+
 		#c='"' + QUOTESYMBOL + number + '"'
 		try:
 			if not c[1:].startswith(QUOTESYMBOL):
 				return c
-		except:		
+		except:
 			return c
-			
+
 		try:
 			dummy = int(c[1 + len(QUOTESYMBOL):-1])
-		except ValueError, TypeError:
+		except (ValueError, TypeError):
 			return c
 
 		try:
@@ -1131,7 +1131,7 @@ class SingleSelect:
 		elif s == '>=':
 			return '<='
 
-		return s #other signs not processed ex '<>'
+		return s #other signs not processed ex '!='
 
 	"""reverse comparison sign. Ex: '0<x' means 'x>0' """
 	def reverseComparisonSign(self, searchRes):
@@ -1164,7 +1164,7 @@ class SingleSelect:
 			if ccc.col != 'select':
 				newComp = self.reverseComparisonSign(ccc)
 				newComp = newComp.replace('#', '')
-				if ccc.comp in [IN_EQUAL, NOT_IN_EQUAL, BETWEEN_EQUAL, 
+				if ccc.comp in [IN_EQUAL, NOT_IN_EQUAL, BETWEEN_EQUAL,
 						NOT_BETWEEN_EQUAL]:
 					"""x in (1,2,3) needs to be replaced twice:
 					once for '(1,2,3) and once for in_equals '_____s02'"""
@@ -1179,10 +1179,10 @@ class SingleSelect:
 				try:
 					addAliasIfOK(self.filters, ccc.col, newComp +' '+ newConst)
 				except:
-					#handle one param funcs, that come as [ ident, "(", ")" ]					
-					addAliasIfOK(self.filters, ccc.col, 
+					#handle one param funcs, that come as [ ident, "(", ")" ]
+					addAliasIfOK(self.filters, ccc.col,
 						newComp + ' ' + ''.join(ccc.const) )
-						
+
 	"""handling table.field in [ 1 ] , meaning a subselect"""
 	def subprocessInSubselect(self, s):
 		for m in re.finditer(reInSubselect, s):
@@ -1192,20 +1192,20 @@ class SingleSelect:
 	def subprocessSubselectAlias(self, s):
 		for m in re.finditer(reSubselectAlias, s):
 			self.subselects[m.group('col')] = m.group('nr')
-			
+
 		for m in re.finditer(reSubselectNoAlias, s):
-			if m.group('nr') not in self.subselects.values():
+			if m.group('nr') not in list(self.subselects.values()):
 				tbl = 'anon_subselect_' + m.group('nr')
 				self.subselects[tbl] = m.group('nr')
 				addAliasIfOK(self.tableAliases, tbl, tbl)
-				
+
 	"""handling UNION INTERSECT .."""
 	def subprocessUnions(self, s):
-		u = (	(Keyword('union', caseless=True) | 
-				Keyword('intersect', caseless=True) | 
+		u = (	(Keyword('union', caseless=True) |
+				Keyword('intersect', caseless=True) |
 				Keyword('except', caseless=True) ) + \
 			Optional(Keyword('all', caseless=True))).setResultsName('union') + \
-			OneOrMore(Literal('[').suppress() + intNum.setResultsName('nr') + Literal(']').suppress()).setResultsName('nrs') 
+			OneOrMore(Literal('[').suppress() + intNum.setResultsName('nr') + Literal(']').suppress()).setResultsName('nrs')
 
 		for i in u.scanString(s):
 			start = i[1]
@@ -1213,7 +1213,7 @@ class SingleSelect:
 				self.unions.append( [ i[0].union, u] )
 			#there can be only one UNION at the very end
 			return s[:start]
-			
+
 		return s
 
 	"""handling the join condition ex t1.a=t2.b """
@@ -1239,7 +1239,7 @@ class SingleSelect:
 			addAliasIfOK(self.joins, source, dest)
 			addAliasIfOK(self.joins, dest, source)
 
-	def addTableEmptyAlias(self, t, a):	
+	def addTableEmptyAlias(self, t, a):
 		avoidUnion = ['', 'union', 'except', 'intersect', 'all']
 		if a is None or a in avoidUnion:
 			if t not in avoidUnion:
@@ -1249,7 +1249,7 @@ class SingleSelect:
 
 	def subprocessAnsiJoins(self, s):
 		s = s + ';'
-		
+
 		joinCondElement = ~_allJoins + (
 			filterConst | columnName | compar | "(" | ")" | "(+)" | _and | _or)
 
@@ -1265,7 +1265,7 @@ class SingleSelect:
 		for i in joinsAndConditions.searchString(s):
 			self.addTableEmptyAlias(i.t1, i.t1alias)
 			join = ' '.join(i.joinConditions)
-			
+
 			if ('full' in repr(i.allJoins)):
 				join = join.replace('=', '#=#')
 			elif ('left' in repr(i.allJoins)):
@@ -1276,10 +1276,10 @@ class SingleSelect:
 			self.subprocessJoins(join)
 			#sometimes filters are mixed into join conditions
 			self.subprocessFilters(join)
-			
+
 		return s
-			
-	""" t1 join t2 using (x,y,z) """ 
+
+	""" t1 join t2 using (x,y,z) """
 	def subprocessAnsiJoinsUsing(self, s):
 		rePat = ReColumnNameNoStar.replace('<col>', '<t1>') + reWS + \
 			r"(inner)?" + reWS + \
@@ -1289,11 +1289,11 @@ class SingleSelect:
 			ReColumnNameNoStar.replace('<col>', '<t2>') + reWS + \
 			"using" + reWS + r"\(" + reWS + reBetweenParens + \
 			reWS + r"\)"
-			
+
 		for m in re.finditer(rePat, s):
 			self.addTableEmptyAlias(m.group('t1'), '')
 			self.addTableEmptyAlias(m.group('t2'), '')
-			
+
 			eq = '='
 			if 'left' in m.group('dir'):
 				eq = '#='
@@ -1301,33 +1301,33 @@ class SingleSelect:
 				eq = '=#'
 			elif 'full' in m.group('dir'):
 				eq = '#=#'
-			
+
 			joinText = []
 			for jCol in m.group('inner').split(','):
-				joinText.append('%s.%s %s %s.%s' % 
-					(m.group('t1'), jCol, eq, m.group('t2'), jCol)) 
-				
+				joinText.append('%s.%s %s %s.%s' %
+					(m.group('t1'), jCol, eq, m.group('t2'), jCol))
+
 			self.subprocessJoins(' and '.join(joinText))
-			
+
 		res = re.sub(rePat, ' ', s)
 		return res
 
 	def subprocessCrossJoin(self, s):
 		rePat = ReColumnNameNoStar.replace('<col>', '<t1>') + reWS + \
 			r"cross " + reWS + "join" + reWS + \
-			ReColumnNameNoStar.replace('<col>', '<t2>') 
-			
+			ReColumnNameNoStar.replace('<col>', '<t2>')
+
 		for m in re.finditer(rePat, s):
 			self.addTableEmptyAlias(m.group('t1'), '')
 			self.addTableEmptyAlias(m.group('t2'), '')
-		
+
 
 	def subprocessTablesAliases(self, s):
 		fromPart = ZeroOrMore(Literal('(')) + \
 				columnName.setResultsName('t0') + \
 				Optional(Keyword('as')) + \
 				Optional(~(_allJoins) + columnName.setResultsName('t0alias'))
-				
+
 		for i in fromPart.searchString(s):
 			if i.t0 not in reserved and \
 					(i.t0alias == '' or i.t0alias not in reserved):
@@ -1340,20 +1340,20 @@ class SingleSelect:
 		for m in re.finditer(rePat, s):
 			if checkIdentifier(m.group('alias')):
 				self.derivedTables[m.group('alias')] = int(m.group('nr'))
-				addAliasIfOK(self.tableAliases, 
-					m.group('alias'), m.group('alias'))	
-		
+				addAliasIfOK(self.tableAliases,
+					m.group('alias'), m.group('alias'))
+
 		#cut optonal as: ... [ 1 ] as alias ....
 		rePat1 = r"\]" + reWS + "[aA][sS]" + reWS
 		res = re.sub(rePat1, '] ', s)
-		
+
 		#cut subselect nr :  .. [ 1 ] alias ..
-		rePat2 = r"\[" + reWS + r"(?P<nr>[0-9]+)" + reWS + r"\]" 
-		
+		rePat2 = r"\[" + reWS + r"(?P<nr>[0-9]+)" + reWS + r"\]"
+
 		res = re.sub(rePat2, '', res)
-		
+
 		return res
-	
+
 	def processTables(self, s):
 		nj = Keyword('natural', caseless=True) + \
 			Keyword('join', caseless=True)
@@ -1366,38 +1366,38 @@ class SingleSelect:
 			raise NaturalJoinException(
 				'Natural Join does not contain explicit column names, [%s]'
 				% s)
-	
+
 		s = self.subprocessDerivedTables(s)
 		s = self.subprocessAnsiJoinsUsing(s)
 		self.subprocessMixedTablesAndAnsiJoins(s)
 		self.subprocessCrossJoin(s)
 		return self.subprocessAnsiJoins(s)
-		
+
 	def subprocessMixedTablesAndAnsiJoins(self, s):
 		#process separately beginning and ANSI joins for the rest
 		sep = r"\s" + \
-			"left|right|full|join|inner|outer".replace('|', r"\s|\s") + '|,'			
+			"left|right|full|join|inner|outer".replace('|', r"\s|\s") + '|,'
 		sepPatern = re.compile(sep)
 		tablesAliasesPart = sepPatern.split(s)
 		for part in tablesAliasesPart:
 			if ' on ' not in part:
-				self.subprocessTablesAliases(part)		
+				self.subprocessTablesAliases(part)
 
 	def processWhereGroupOrderHaving(self, reservedWord, s):
 		if reservedWord == 'having':
 			self.subprocessAggregs(s)
-			
+
 		#' '_'*10 appended at the end of the column to show ORDER DESC
 		if reservedWord == 'order_by':
 			if s[-1] == ';':
 				s = s[:-1]
 			s = ',' + s + ','
 			s = s.replace(' desc,', ORDER_DESC_SUFFIX + ',')
-					
+
 		for c,start,end in columnName.scanString(s):
 			if checkIdentifier(c[0]) and \
 					(('*' not in c[0]) or ('.*' in c[0]) ) and \
-					(len(compar.searchString(c[0])) == 0):			
+					(len(compar.searchString(c[0])) == 0):
 				if reservedWord == 'group_by':
 					self.groups.add(c[0])
 				elif reservedWord == 'order_by':
@@ -1417,35 +1417,35 @@ class SingleSelect:
 	def sanityCheckTables(self):
 		aliasesFromColumns = set( [getFirstTwoDots(x) for x in self.columns] )
 		#get table names
-		tablesAndAliases = set( [getLastDot(x) for x in 
-			self.tableAliases.keys() + self.parentTables.keys()] )
+		tablesAndAliases = set( [getLastDot(x) for x in
+			list(self.tableAliases.keys()) + list(self.parentTables.keys())] )
 
 		#get schema from schema.table
-		tablesAndAliases = tablesAndAliases.union(self.tableAliases.keys())
-			
-		for tas in self.tableAliases.values() + self.parentTables.values():
+		tablesAndAliases = tablesAndAliases.union(list(self.tableAliases.keys()))
+
+		for tas in list(self.tableAliases.values()) + list(self.parentTables.values()):
 			#append from set of aliases
 			tablesAndAliases = tablesAndAliases.union(
 				set( [getLastDot(x) for x in tas] ) )
-								
+
 		for t in aliasesFromColumns:
-			if t <> '' and t not in tablesAndAliases:
+			if t != '' and t not in tablesAndAliases:
 				raise MallformedSQLException(
 					'identifier %s refers to unknown table or alias' % t)
 
 	""" self.columns contains all joins, filters..
 	Easier to write output"""
-	def addColumnsFromOthers(self):		
+	def addColumnsFromOthers(self):
 		for s in 'aggregs groups filters havings colAliases exprAliases'.split():
 			for j in eval('self.' + s):
 				self.columns.add(j)
-				
+
 		#Extra ORDER_DESC_SUFFIX at end for ORDER DESC
 		for j in self.orders:
 			if j.endswith(ORDER_DESC_SUFFIX):
 				self.columns.add(j[:-len(ORDER_DESC_SUFFIX)])
 			else:
-				self.columns.add(j)			
+				self.columns.add(j)
 
 		for i in self.joins:
 			for j in self.joins[i]:
@@ -1461,28 +1461,28 @@ class SingleSelect:
 					if alias == '':
 						alias2 = table
 					self.columns.add(alias2 + ".*")
-		
+
 	""" renames a to t.a in:
 	select a from table t; """
 	def aliasSingleSelectCols(self):
 		if len(self.tableAliases) != 1:
 			return
-			
-		(tbl, alias) = self.tableAliases.items()[0]		
-		
+
+		(tbl, alias) = list(self.tableAliases.items())[0]
+
 		try:
 			alias = list(alias)[0] #tbl -> set of aliases, remember?
-		except TypeError, IndexError:
+		except (TypeError, IndexError):
 			alias = tbl
-			
+
 		alias = alias + '.'
-				
+
 		#dict: aggregs filters colAliases havings
-		#it could do keys() part of joins, but usually joins require 
+		#it could do keys() part of joins, but usually joins require
 		#_several_ tables. For now, the self joins have to be written by hand
 		for s in 'aggregs filters colAliases havings'.split():
-			for j in eval('self.' + s):
-				if '.' not in j:	
+			for j in list(eval('self.' + s)):
+				if '.' not in j:
 					cmd = 'self.%s[alias + "%s"] = self.%s.pop("%s")' % \
 						(s, j, s, j)
 					#print cmd
@@ -1492,75 +1492,75 @@ class SingleSelect:
 		for s in 'groups orders exprAliases columns'.split():
 			if eval('len(self.%s)' % s) == 0:
 				continue
-				
+
 			tmp = set()
 			for j in eval('self.' + s):
 				if s=='columns' and j.startswith(QUOTESYMBOL):
 					#this is a constant placeholder, not a column
 					continue
-					
+
 				if '.' not in j:
 					tmp.add(alias + j)
 				else:
 					tmp.add(j)
 
 			cmd = 'self.%s = tmp' % s
-			#print cmd, tmp			
+			#print cmd, tmp
 			exec(cmd)
-			
+
 		#exprAliases become columns
 		for e in self.exprAliases:
 			self.columns.add(e)
-			
+
 		self.exprAliases = set()
-		
+
 		tmp = set()
 		for p in self.projectionCols:
 			if p.startswith(alias):
 				tmp.add(p)
 			else:
 				tmp.add(alias + p)
-				
+
 		self.projectionCols = tmp
-				
+
 	def process(self, s, parentTables = {}):
 		self.reset(parentTables)
-		
+
 		#fix for postJoin
 		if s[-1] != ';':
 			s = s + ';'
 
 		self.revQuotedConsts = self.qr.getQuotedConstsDict()
-		
+
 		s = self.subprocessUnions(s)
 
 		sep = "select|from|where|group_by|order_by|having"
 		sep2 = (sep + r"\s").replace('|', r"\s|\s")
-				
+
 		sepPatern = re.compile("(" + sep2 + ")")
 
 		parts = sepPatern.split(s)
-		
+
 		"""MultipleSelectsException is different because
 		it can be handled with subselect"""
-		if len([i for i in parts if i.startswith('select')]) <> 1:
+		if len([i for i in parts if i.startswith('select')]) != 1:
 			raise MultipleSelectsException(
 				'Only one [select] expected in [%s]' % s)
-				
+
 		if len(s.split(' using ')) > 2:
 			raise AmbiguousColumnException(
 			'max two tables can be joined relaibly with using clause')
 
 		assert parts[0] == '' #missing select
 		assert parts[1].startswith('select')
-				
+
 		for i in sep.split('|'):
 			if len([x for x in parts if x == ' ' + i + ' ']) > 1:
 				raise MallformedSQLException(
 					'Only one [%s] expected in [%s]' % (i, s) )
 
 		self.processColAliases(parts[2])
-		for i in xrange(len(parts)-3):
+		for i in range(len(parts)-3):
 			if parts[i + 3] == ' from ':
 				self.processTables(parts[i + 4])
 				self.subprocessSubselectAlias(parts[i + 4])
@@ -1571,17 +1571,17 @@ class SingleSelect:
 				self.subprocessFilters(parts[i + 4])
 				self.subprocessJoins(parts[i + 4])
 				self.subprocessInSubselect(parts[i + 4])
-				
+
 		self.aliasSingleSelectCols()
 
 		self.addColumnsFromOthers()
-		
-		self.sanityCheckColumns()		
+
+		self.sanityCheckColumns()
 		self.checkAmbiguousColumns()
-		
+
 		self.sanityCheckTables()
 		self.addStarToAllTables()
-				
+
 		return self.tableAliases
 
 """adds cluster prefix only to tables in sub-selects"""
@@ -1613,22 +1613,22 @@ class DotOutput:
 		res = res.replace(NOT_BETWEEN_EQUAL, " ")
 		res = res.replace(BETWEEN_EQUAL, " ")
 		return res
-		
+
 	""" table has one extra alias, formated as __SUBSELECT__2, meaning where in the SQL stack it comes from"""
 	def extractParent(self, x):
 		for t in self.ss.parentTables:
 			if ((x == t) or #x is table
-				(x in self.ss.parentTables[t])) : #x is alias			
+				(x in self.ss.parentTables[t])) : #x is alias
 				for i in self.ss.parentTables[t]:
 					if SUBSELECT in i:
 						return int(i[len(SUBSELECT):])
-		
-	def isInParent(self, x):			
-		if (x in self.ss.tableAliases) or (x in reduce(set.union, self.ss.tableAliases.values())):
+
+	def isInParent(self, x):
+		if (x in self.ss.tableAliases) or (x in functools.reduce(set.union, list(self.ss.tableAliases.values()))):
 			return -1
-			
+
 		res = []
-			
+
 		if x in self.ss.parentTables:
 			res.append( self.extractParent(x) )
 		else:
@@ -1636,39 +1636,39 @@ class DotOutput:
 			for t in self.ss.parentTables:
 				if x in self.ss.parentTables[t]:
 					res.append( self.extractParent(t) )
-					
+
 		if len(res) > 1:
-			print "gaga"
+			print("gaga")
 			raise Exception("duplicated parent tables/aliases")
 		elif len(res) == 1:
 			return res[0]
 		else:
 			return -1
-		
+
 	def getColor(self, c):
 		if c == 0:
 			return 'white'
 		return CLUSTERCOLORS[c % len(CLUSTERCOLORS)]
-		
+
 	#remove funny chars from graphviz edge and node names
-	#(if needed, use quoting in labels ..) 
+	#(if needed, use quoting in labels ..)
 	def dotSanitize(self, s):
 		return s.replace('$','').replace('.','__')
-		
+
 	"""drop table name from count(t.x) and count(DISTINCT t.x)
 	also used for HAVING clauses"""
 	def DistinctFieldFormatter(self, fld):
 		firstRParen = fld.find(')')
-		
+
 		lParenOrSpace = fld[:firstRParen].rfind(' ')
 		if lParenOrSpace == -1:
 			lParenOrSpace = fld.find('(') # no DISTINCT
-			
-		#handle also schema.table.field 
+
+		#handle also schema.table.field
 		prevDot = fld[:firstRParen].rfind('.')
 		if prevDot == -1:
 			prevDot = lParenOrSpace
-			
+
 		return fld[:lParenOrSpace+1] + fld[prevDot+1:]
 
 	def formatField(self, c):
@@ -1676,11 +1676,11 @@ class DotOutput:
 		lc = getLastDot(c).lower()
 		#if c in self.ss.joins or c.upper() in self.ss.joins:
 		#optimize : somehow display one column only once
-		
-		if lc <> '_':
+
+		if lc != '_':
 			#_ means expression alias referring to cols in this table
 			res.append('<%s> ' % self.dotSanitize(lc) )
-			
+
 			if c in self.ss.filters:
 				temp = lc + ' '
 				for i in self.ss.filters[c]:
@@ -1689,10 +1689,10 @@ class DotOutput:
 
 			if c in self.ss.groups:
 				res.append('GROUP BY ' + lc)
-				
+
 			if c in self.ss.orders:
 				res.append('ORDER BY ' + lc)
-				
+
 			if c + ORDER_DESC_SUFFIX in self.ss.orders:
 				res.append('ORDER BY %s DESC' % lc)
 
@@ -1712,11 +1712,11 @@ class DotOutput:
 					res = []
 				else:
 					#just column name, no label
-					res[0] = res[0] + lc	
+					res[0] = res[0] + lc
 			else:
 				res[1] = res[0] + res[1]
 				res = res[1:]
-			
+
 		try:
 			for a in self.ss.colAliases[c]:
 				if lc == '_':
@@ -1728,18 +1728,18 @@ class DotOutput:
 		except:
 			pass
 		return '|'.join(res)
-		
-	def formatTable(self, t, a, clusterNr = 0):		
+
+	def formatTable(self, t, a, clusterNr = 0):
 		tbl = self.dotSanitize(a.upper())
 		headerTbl = tbl
 		clr = clusterNr
-		
+
 		if t in self.ss.derivedTables:
 			headerTbl = 'DERIVED TABLE'
 			clr = self.ss.derivedTables[t]
-			
-		res = ['\t%s%s [style=filled, fillcolor=%s, label="%s | (%s) ' % 
-			(formatCluster(clusterNr), self.dotSanitize(a.upper()), self.getColor(clr), 
+
+		res = ['\t%s%s [style=filled, fillcolor=%s, label="%s | (%s) ' %
+			(formatCluster(clusterNr), self.dotSanitize(a.upper()), self.getColor(clr),
 			headerTbl, t.upper()) ]
 
 		sortedCols = []
@@ -1761,34 +1761,34 @@ class DotOutput:
 					res.append(self.formatTable(t, a, clusterNr))
 
 		return res
-		
+
 	"""aliases for expressions are displayed in a separate table"""
 	def genExprAliasNodes(self):
 		res = []
 		for a in enumerate(self.ss.exprAliases):
 			res.append('\t_expr_%d [label="... AS %s"];' % a)
-			
-		return res			
-		
+
+		return res
+
 	"""aliases do not have table name. This func avoids ":alias" """
 	def getFirstLastDots(self, fld):
 		lastDot = getLastDot(fld)
 		firstTwoDots = self.dotSanitize(getFirstTwoDots(fld)) + ':'
 		if firstTwoDots == ':':
 			firstTwoDots = ''
-			
+
 		return (lastDot, firstTwoDots)
-		
+
 
 	"""gvpr needs both arrowhead and arrowtail in order to reverse the edge"""
 	def formatJoin(self, i, j, iClusterNr, jClusterNr):
-		#firstTwoDots === table_alias name OR '' for expression aliases 
+		#firstTwoDots === table_alias name OR '' for expression aliases
 		(lastDot_i, firstTwoDots_i) = self.getFirstLastDots(i)
 		(lastDot_j, firstTwoDots_j) = self.getFirstLastDots(j)
-		
+
 		iCluster = formatCluster(iClusterNr)
 		jCluster = formatCluster(jClusterNr)
-		
+
 		res = '\t' + iCluster + firstTwoDots_i.upper() + lastDot_i.lower() + \
 			' -- ' + jCluster + firstTwoDots_j.upper() + lastDot_j.lower()
 
@@ -1808,15 +1808,15 @@ class DotOutput:
 		else:
 			color = 'black'
 
-		res += ' [color = %s %s]' % (color, outer)
+		res += ' [color = %s %s dir=both]' % (color, outer)
 
 		return res + ';'
 
 	def genEdges(self, clusterNr=0):
-		"""returns two sets of edges: 
+		"""returns two sets of edges:
 			joins inside the cluser = subselect AND
-			joins from parent 
-			
+			joins from parent
+
 			AND joins between alias and subselects"""
 		res = ([], [], [])
 		for i in self.ss.joins:
@@ -1830,45 +1830,45 @@ class DotOutput:
 						res[1].append(self.formatJoin(i, j, clusterNr, parentJ))
 					else:
 						res[0].append(self.formatJoin(i, j, clusterNr, clusterNr))
-						
+
 		res[2].extend( self.genSubselectEdges(clusterNr))
-		
+
 		for (u, nr) in self.ss.unions:
 			edge = '\n%s_dummy -> %s_dummy [color = black, arrowtail="none", arrowhead="none", label="%s"];\n' % \
 				(formatCluster(clusterNr), formatCluster(int(nr)), ' '.join(u))
-			
+
 
 			res[2].append(edge)
-			
+
 		return res
-		
+
 	def genSubselectEdges(self, clusterNr):
 		res = []
 		for i in self.ss.subselects:
-			res.append('%s%s -> %s_dummy [color = black, arrowtail="none", arrowhead="none"];' % (formatCluster(clusterNr), i.upper(), 
+			res.append('%s%s -> %s_dummy [color = black, arrowtail="none", arrowhead="none"];' % (formatCluster(clusterNr), i.upper(),
 				formatCluster(int(self.ss.subselects[i]))))
 
 		return res
-		
+
 	def checkFanChasmTraps(self):
 		res = ''
-		
+
 		tablesWithAgg = set([getFirstTwoDots(a) for a in self.ss.aggregs])
-		
+
 		if len(tablesWithAgg) > 1:
-			w = ','.join(self.ss.aggregs.keys())
+			w = ','.join(list(self.ss.aggregs.keys()))
 			res = r'WARNING [label="Risk of Fan and/or Chasm trap: \l' + \
 				r'There are aggregates in more than one table:\l %s"' % w + \
 				r'fontcolor=red color=red];'
-				
-		return res 
+
+		return res
 
 	def process(self, clusterNr = 0):
 		""" clusterNr == 0 means it's a main graph"""
 		if clusterNr == 0:
 			res = ['graph ', '{', '\tnode [shape=record, fontsize=12];',
-				'\tgraph [splines=true];', 
-				'\trankdir=LR;', 
+				'\tgraph [splines=true];',
+				'\trankdir=LR;',
 				'\tdir=none;',
 				'\t\t_dummy [shape=none, label=""];',
 				'']
@@ -1877,8 +1877,8 @@ class DotOutput:
 				'\t\tstyle=filled;',
 				'\t\tcolor=%s;' % self.getColor(clusterNr) ,
 				'\t\tnode [shape=record, fontsize=12];',
-				'\t\tgraph [splines=true];', 
-				'\t\trankdir=LR;', 
+				'\t\tgraph [splines=true];',
+				'\t\trankdir=LR;',
 				'\t\tdir=none;',
 				'\t\tlabel="subselect %d";' % clusterNr,
 				'\t\t%s_dummy [shape=none, label=""];' % formatCluster(clusterNr),
@@ -1887,25 +1887,25 @@ class DotOutput:
 		res.extend(self.genExprAliasNodes() )
 		res.append('')
 		edges = self.genEdges(clusterNr)
-		
+
 		res.append(self.checkFanChasmTraps() )
-		
+
 		res.extend(edges[0] )	#joins inside subselect
 		if clusterNr == 0:
 			res.append('}')
 		else:
 			res.append('\t}')
-			
+
 		#(graph_as_dot, edges_coming_from_outer_select)
 		return ('\n'.join(res) , edges[1], edges[2])
 
 class SelectAndSubselects:
 	def __init__(self):
-		pass		
-		
+		pass
+
 	def parenCount(self, s):
 		return s.count('(') - s.count(')')
-					
+
 	def getSubselectLen(self, s):
 		if s[0] == '(':
 			# ex "(select ..) CUT HERE .."
@@ -1913,17 +1913,17 @@ class SelectAndSubselects:
 		else:
 			# ex "select ... CUT HERE) .."
 			endCount = -1
-			
+
 		"""parens provide clear separation of the subquery"""
 		parens = 0
-		for i in xrange(len(s)):
+		for i in range(len(s)):
 			if s[i] == '(':
 				parens += 1
 			if s[i] == ')':
 				parens -= 1
 			if parens == endCount:
 				return i + 1 + endCount
-				
+
 		"""if the select in not enclosed in parens, maybe is not subselect 
 		
 		UNION belongs to the next SELECT
@@ -1931,7 +1931,7 @@ class SelectAndSubselects:
 		"""if ' union' == s[-6:]:
 			return len(s)-6"""
 		return len(s)
-		
+
 	def getMostNested(self, s):
 		separator = re.compile("([\(|\s]select\s)", re.IGNORECASE)
 		fragSep = separator.split(s)
@@ -1939,22 +1939,22 @@ class SelectAndSubselects:
 			return (0, len(s))
 
 		fragments = [fragSep[0]] + \
-			[fragSep[2*i+1] + fragSep[2*i+2] for i in xrange(len(fragSep)/2)]
-						
-		nesting = map(self.parenCount, fragments)
-		
+			[fragSep[2*i+1] + fragSep[2*i+2] for i in range(len(fragSep)//2)]
+
+		nesting = list(map(self.parenCount, fragments))
+
 		#the SELECT fragment that closes the most parens is the most nested
 		#the first SELECT is not ok
 		minNest = min(nesting[1:])
 		minPos = 1 + nesting[1:].index(minNest)
 		mostNested = fragments[minPos]
-		
+
 		start = sum(map(len, fragments[:minPos]))
 		end = self.getSubselectLen(fragments[minPos])
-				
+
 		return (start, start + end)
-		
-	def getSqlStack(self, s):		
+
+	def getSqlStack(self, s):
 		sqlStack = []
 		tmp = s
 		start = -1
@@ -1963,16 +1963,16 @@ class SelectAndSubselects:
 			(start, end) = self.getMostNested(tmp)
 			sqlStack.append( (i, tmp[start:end] ) )
 			tmp = tmp[:start] + ' [ %d ] '% i + tmp[end:]
-			
-			i += 1			
+
+			i += 1
 
 		#replace clusterNr of main SQL = 0
 		mainFrame = sqlStack[-1]
 		mainFrame = (0, mainFrame[1])
 		sqlStack[-1] = mainFrame
 		return sqlStack
-		
-		
+
+
 	def massageTableCol(self, tc, tableAliases):
 		t = tc.split('.')
 		if len(t) == 2:
@@ -1980,50 +1980,50 @@ class SelectAndSubselects:
 		else:
 			#if there is one table, prefix column with table
 			if len(t) == 1 and len(tableAliases) == 1:
-				a = tableAliases.keys()[0]
+				a = list(tableAliases.keys())[0]
 				try:
 					aliases = list(tableAliases.values()[0])
 					a = [i for i in aliases if not(i.startswith(SUBSELECT))][0]
 				except:
 					pass
-				
+
 				return a.upper() + ':' + tc.lower()
-				
+
 		return tc
 
-		
+
 	"""
 	[correlated] sub query
 	select * from t where t.a in (select b from innerT )
 	
 	two steps:
 	-join from parent_table.field -> workaround_1 (here)
-	-replace workaround_1 with correct projectionCol"""	
+	-replace workaround_1 with correct projectionCol"""
 	def getMainSubJoinEdges(self, s, clusterNr, tableAliases):
 		res = []
-						
+
 		#sql not yet converted to lower case
 		for m in re.finditer(reInSubselect, s):
 			res.append('%s%s:e -> workaround_%s ;' % \
 				(formatCluster(clusterNr),
-				self.massageTableCol(m.group('col'), tableAliases), 
+				self.massageTableCol(m.group('col'), tableAliases),
 				m.group('nr')))
-														
+
 		return res
-			
+
 	def fixMainSubJoinEdges(self, mainEdges, projectionCols):
 		res = []
-		
+
 		for l in mainEdges:
 			parts = l.split(' -> ')
 			assert len(parts) == 2
 			assert parts[1][-1] == ';'
 			workaroundParts = parts[1].split('workaround_')
 			assert len(workaroundParts) == 2
-			
+
 			w = int(workaroundParts[1][:-1])
 			assert w > 0
-			
+
 			try:
 				fix = projectionCols[w].pop()
 				fixParts = fix.split('.')
@@ -2031,14 +2031,14 @@ class SelectAndSubselects:
 				fix = SUBSELECT + '_' + repr(w) + '_' + fixParts[0].upper() + \
 					':' + fixParts[1].lower() + ':w'
 			except:
-				fix = SUBSELECT + '_' + repr(w) + '__dummy'						
-			
-									
+				fix = SUBSELECT + '_' + repr(w) + '__dummy'
+
+
 			#compar or IN
 			res.append('%s -> %s [label="IN"];' % (parts[0], fix ) )
-			
+
 		return res
-		
+
 	def process(self, s, algo):
 		#"inject" tables of parent into subselects
 		parentTables = {}
@@ -2049,13 +2049,13 @@ class SelectAndSubselects:
 		sqlStack = self.getSqlStack(s)
 		#start with outermost select
 		sqlStack.reverse()
-		
+
 		res = []
 		joinsFromParent = []
 		joinsFromSubselects = []
-		
-		projectionCols = [set() for x in xrange(len(sqlStack))]
-		
+
+		projectionCols = [set() for x in range(len(sqlStack))]
+
 		clusters = []
 		i = len(sqlStack)
 		for frame in sqlStack:
@@ -2064,10 +2064,10 @@ class SelectAndSubselects:
 				x = x[1:-1]
 			if frame is sqlStack[0]:
 				#main SQL statement
-				
+
 				#((graph_as_dot, edges_coming_from_outer_select), projectionCols)
 				tmp = simpleQuery2Dot(x, 0, {}, parentTables)
-				
+
 				nicerMainGraph = subGraphDotRunner(tmp[0][0], algo)
 				assert tmp[0][1] == []
 				res = nicerMainGraph.strip()
@@ -2079,22 +2079,22 @@ class SelectAndSubselects:
 				tmp = simpleQuery2Dot(x, clusterNr, parentTables, parentTables)
 				projectionCols[clusterNr] = tmp[1]
 				#make it a graph for gvpr processing
-				
+
 				#((graph_as_dot, edges_coming_from_outer_select), projectionCols)
 				nicerSubgraph = subGraphDotRunner(
 					tmp[0][0].replace('subgraph', 'graph'), algo)
-					
+
 				#change it back to subgraph
-				nicerSubgraph = nicerSubgraph.replace('digraph G', 
+				nicerSubgraph = nicerSubgraph.replace('digraph G',
 					'subgraph cluster_%d ' % clusterNr)
 				clusters.append(nicerSubgraph)
-				joinsFromParent.extend(tmp[0][1])				
-				
-			joinsFromSubselects.extend( tmp[0][2] )				
+				joinsFromParent.extend(tmp[0][1])
+
+			joinsFromSubselects.extend( tmp[0][2] )
 			mainEdges.extend(self.getMainSubJoinEdges(x, clusterNr, tmp[2]))
-			
+
 		mainEdges = self.fixMainSubJoinEdges(mainEdges, projectionCols)
-			
+
 		assert res[-1] == '}'
 		res = res[:-1]
 		res += '\n'.join(clusters)
@@ -2105,7 +2105,7 @@ class SelectAndSubselects:
 		res += '\n}'
 		return res
 
-		
+
 """copied from Dive into Python / Mark Pilgrim"""
 def openAnything(source):
 	if source == '-':
@@ -2119,7 +2119,7 @@ def openAnything(source):
 		pass
 
 	#treat source as string
-	import StringIO
+	from io import StringIO
 	return StringIO.StringIO(str(source))
 
 def simpleQuery2Dot(s, clusterNr = 0, parentTables = {}, resultTables = {}):
@@ -2134,38 +2134,38 @@ def simpleQuery2Dot(s, clusterNr = 0, parentTables = {}, resultTables = {}):
 			si.process(
 				qr.process(s)), parentTables)
 	res = dot.process(clusterNr)
-	
+
 	for (k,v) in resultParentTables.items():
 		subsel = '%s%d' % (SUBSELECT, clusterNr)
 		v.add(subsel)
 		resultTables[k] = v
-		
+
 	#((graph_as_dot, edges_coming_from_outer_select), projectionCols, tableAliases)
 	return (res, ss.projectionCols, ss.tableAliases)
-	
+
 #there are similar functions in gui.py / webrevj.py
-#those are rendering the final image .. 
+#those are rendering the final image ..
 def subGraphDotRunner(dot, algo):
 	dotFile = tempfile.mkstemp('.dot', '', STATICDIR)
-	os.write(dotFile[0], dot)
+	os.write(dotFile[0], dot.encode())
 	os.close(dotFile[0])
-	
+
 	resFile = tempfile.mkstemp('.dot', '', STATICDIR)
 	os.close(resFile[0])
-		
+
 	#cmd = '%s "%s"| gvpr -f"%s" -o"%s"'  % (algo, dotFile[1], DIRG, resFile[1])
 	cmd = '%s "%s"| gvpr -f"%s" > "%s"'  % (algo, dotFile[1], DIRG, resFile[1])
 	os.system(cmd)
 
 	f = open(resFile[1])
 	res = f.readlines()
-	f.close()	
-	
+	f.close()
+
 	os.remove(dotFile[1])
 	os.remove(resFile[1])
-	
+
 	assert len(res) > 3
-	
+
 	return ''.join(res)
 
 
@@ -2184,8 +2184,8 @@ if __name__ == '__main__':
 	if len(sys.argv) > 1:
 		fileLike = openAnything(sys.argv[1])
 		s = fileLike.read()
-		print query2Dot(s)
+		print(query2Dot(s))
 	else:
 		import unittest
-		exec open('tests.py').read()
+		exec(open('tests.py').read())
 		unittest.main()

@@ -142,8 +142,8 @@ class QuoteRemoverTestCase(unittest.TestCase):
 	def testRemoveDoubleQuotes(self):
 		res = [""" "my table"."my column\" is "" long '' """,
 			""" 'a''b\'c\'d' """]
-		res = map(self.qr.removeQuoteEscapes, res)
-		res = map(self.qr.removeQuotedIdent, res)
+		res = list(map(self.qr.removeQuoteEscapes, res))
+		res = list(map(self.qr.removeQuotedIdent, res))
 		for r in res:
 			for q in ESCAPEDQUOTES:
 				assert q not in res + [' ']
@@ -205,7 +205,7 @@ class QuoteRemoverTestCase(unittest.TestCase):
 		for r in bads:
 			self.assertRaises(BadIdentException,
 				self.qr.process, r)
-				
+
 	def testSanityOk(self):
 		goods = ["select * from t where x='((((('",
 			"select * from t where x=']]]]]]'",
@@ -237,7 +237,7 @@ class QuoteRemoverTestCase(unittest.TestCase):
 		s = ("select * from table t where t.a not in (1,2,3) "
 			"and t.b not in ('x', 'y') and t.c='a'")
 		res = self.qr.process(s)
-		
+
 		ok = False
 		for i in compar.searchString(res):
 			if i[0] != 'not_in_equal':
@@ -250,11 +250,11 @@ class QuoteRemoverTestCase(unittest.TestCase):
 		assert ')' not in res
 		assert 'not in (1,2,3)' in self.qr.quotedConsts
 		assert "not in ('x','y')" in self.qr.quotedConsts
-		
+
 	def testEmptyStringConst(self):
 		s = "SELECT IF (cu.active, 'active','') from cu"
 		res = self.qr.process(s)
-		
+
 		assert "'active'" in self.qr.quotedConsts
 		assert "''" in self.qr.quotedConsts
 
@@ -285,18 +285,18 @@ class QuoteRemoverTestCase(unittest.TestCase):
 		assert "table.b22 =  '" in res
 		assert "table.a11" in res
 		assert "not_between_equal" in res
-		
+
 	def testSelectDistinct(self):
 		s = ("Select distinct a.id from a " )
 		res = self.qr.process(s)
 
 		assert "distinct" not in res.lower()
-		
+
 class SimplifierTestCase(unittest.TestCase):
 	def setUp(self):
 		self.si = Simplifier()
 		self.qr = QuoteRemover()
-		
+
 	def process(self, s):
 		self.qr.reset()
 		self.si.reset()
@@ -360,41 +360,41 @@ class SimplifierTestCase(unittest.TestCase):
 		assert '3333' not in res
 		assert '4444' not in res
 		assert 'nvl' not in res
-		
+
 	def testFuncsWithCommaJoins(self):
 		s = "select * from t1, t2 where t1.a=t2.a and nvl(t1.x,0) =(+) nvl(t2.y, 0) and t1.b = t2.b;"
 		res = self.process(s)
 
 		assert 'nvl' not in res
-		
+
 	def testFuncsNoParam(self):
 		s = "select a + 2 + pi()*3 from table where b=random();"
 		res = self.process(s)
 
 		assert 'pi' not in res	#pi is redundant
 		assert "random" in res	#don' remove == constant func()
-		
+
 	def testFuncsAndAggregs(self):
 		s = "select x, sum(t.y) from t group by x having nvl(sum(z)) > 0;"
 		res = self.process(s)
-		
+
 		assert '_agg(z)' in res
 		assert 'nvl' not in res
-		
+
 	def testDistinctAggregs(self):
 		s = "select count(a), count(distinct b), count(DISTINCT c) from t "
 		res = self.process(s)
-		
+
 		cntPos = aggregatesAsList.index('count')
-		
+
 		assert '_%s_agg(a)' % cntPos in res
-		
+
 		#one space left after removing "(DISTINCT b)"
-		assert '_%s_agg( b)' % (cntPos + AGG_DISTINCT) in res 
-		assert '_%s_agg( b)' % (cntPos + AGG_DISTINCT) in res 
+		assert '_%s_agg( b)' % (cntPos + AGG_DISTINCT) in res
+		assert '_%s_agg( b)' % (cntPos + AGG_DISTINCT) in res
 		assert 'distinct' not in res
-		
-		
+
+
 	def testKeepSpacing(self):
 		s = "select a, (2*m) from table;"
 		res = self.process(s)
@@ -446,18 +446,18 @@ class SimplifierTestCase(unittest.TestCase):
 		assert "aa" in res
 		assert "bb" in res
 		assert "cc" in res
-		
+
 	def testSquareBrackets(self):
 		s = "select aa as [bb] from table;"
 		res = self.process(s)
 
 		assert "aa" in res
-		
+
 	def testDollarCurlyBraces(self):
 		s = "select a,b,c from ${table};"
 		res = self.process(s)
 
-		assert "$table" in res	
+		assert "$table" in res
 
 	def testTableAliases(self):
 		s = "select * from table1 aa, table 2 bb;"
@@ -504,17 +504,17 @@ class SimplifierTestCase(unittest.TestCase):
 		res = self.process(s)
 
 		assert len(res.split('=')) == 4	# 3 equals, one removed :-)
-		
+
 	def testGROUP_CONCAT(self):
 		#this query is on the frontpage; embarrasing
 		s = """SELECT GROUP_CONCAT(film.name, SEPARATOR ', ') AS actors
 			FROM film"""
-			
+
 		res = self.process(s)
 
-		assert "separator" not in res.lower()  
-		
-		
+		assert "separator" not in res.lower()
+
+
 class SingleSelectTestCase(unittest.TestCase):
 	def setUp(self):
 		self.si = Simplifier()
@@ -542,7 +542,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 'aa' not in self.ss.colAliases['t.b']
 		assert 'bb' in self.ss.colAliases['t.b']
 		assert 'cc' in self.ss.colAliases['t.c']
-		
+
 		assert 't.d' not in self.ss.colAliases
 		assert 'd' not in self.ss.colAliases
 		assert 'as' not in self.ss.colAliases
@@ -575,7 +575,7 @@ class SingleSelectTestCase(unittest.TestCase):
 
 		#oo is no longer expression alias; it is a column
 		assert 'table.oo' in self.ss.columns
-		
+
 	def testColAliasExpressionsWithJoins(self):
 		s = 'select 2*(t1.m+"t2.n"+3) as oo ,t1.b as bb from t1, t2;'
 		res = self.process(s)
@@ -655,41 +655,41 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 'table1' in self.ss.tableAliases
 		assert 'table2' in self.ss.tableAliases
 		assert 'table3' in self.ss.tableAliases
-		
+
 	def testLeftJoinAnsi(self):
 		s = """SELECT * FROM t1 LEFT JOIN t2 on t1.a=t2.a"""
 		res = self.process(s)
-		
+
 		assert 'T1.A' in self.ss.joins
 		assert 't2.a' in self.ss.joins
-		
+
 	def testRightJoinAnsi(self):
 		s = """SELECT * FROM t1 right JOIN t2 on t1.a=t2.a"""
 		res = self.process(s)
-		
+
 		assert 't1.a' in self.ss.joins
 		assert 'T2.A' in self.ss.joins
-		
+
 	def testFullJoinAnsi(self):
 		s = """SELECT * FROM t1 FULL JOIN t2 on t1.a=t2.a"""
 		res = self.process(s)
-		
+
 		assert 'T1.A' in self.ss.joins
 		assert 'T2.A' in self.ss.joins
-		
+
 	#def testCrossAnsi(self):
 	#	s = """SELECT * FROM t1 CROSS JOIN t2 where t1.a=3 and t2.b=5"""
 	#	res = self.process(s)
-		
+
 	#	assert 't1.a' in self.ss.columns
 	#	assert 't2.b' in self.ss.columns
 	#	assert len(self.ss.joins) == 0
 	#	assert '--' not in res
-		
+
 	def testCrossJoinAlias(self):
 		s = """SELECT * FROM t1 a1 CROSS JOIN t2 a2;"""
 		res = self.process(s)
-			
+
 		assert 't1' in self.ss.tableAliases
 		assert 't2' in self.ss.tableAliases
 		#this needs to be fixed properly
@@ -697,71 +697,71 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 'a2' not in self.ss.tableAliases
 		assert 'a1' in self.ss.tableAliases['t1']
 		assert 'a2' in self.ss.tableAliases['t2']
-		
+
 		assert len(self.ss.joins) == 0
 		assert '--' not in res
-		
+
 	def testJoinUsing(self):
 		s = """SELECT * FROM t1 JOIN t2 USING (a,b,c,d)"""
 		res = self.process(s)
-		
+
 		assert 't1.a' in self.ss.joins
 		assert 't1.b' in self.ss.joins
 		assert 't1.c' in self.ss.joins
 		assert 't1.d' in self.ss.joins
-		
+
 		assert 't2.a' in self.ss.joins
 		assert 't2.b' in self.ss.joins
 		assert 't2.c' in self.ss.joins
 		assert 't2.d' in self.ss.joins
-		
+
 		assert 't2.a' in self.ss.joins['t1.a']
 		assert 't2.b' in self.ss.joins['t1.b']
 		assert 't2.c' in self.ss.joins['t1.c']
 		assert 't2.d' in self.ss.joins['t1.d']
-		
+
 		assert len(self.ss.tableAliases) == 2
 		assert 't1' in self.ss.tableAliases
 		assert 't2' in self.ss.tableAliases
-		
+
 	def testLeftJoinUsing(self):
 		s = """SELECT * FROM t1 LEFT JOIN t2 USING (a,b,c,d)"""
 		res = self.process(s)
-		
+
 		assert 'T1.A' in self.ss.joins
 		assert 't2.a' in self.ss.joins
-		
+
 	def testRightJoinUsing(self):
 		s = """SELECT * FROM t1 right JOIN t2 USING (a,b,c,d)"""
 		res = self.process(s)
-		
+
 		assert 't1.a' in self.ss.joins
 		assert 'T2.A' in self.ss.joins
-		
+
 	def testFullJoinUsing(self):
 		s = """SELECT * FROM t1 FULL JOIN t2 USING (a,b,c,d)"""
 		res = self.process(s)
-		
+
 		assert 'T1.A' in self.ss.joins
 		assert 'T2.A' in self.ss.joins
-		
+
 	def testMax2TablesUsing(self):
-		
+
 		s = """SELECT * FROM t1 JOIN t2 USING (a,b) join t3 using (a,b)"""
 		self.assertRaises(AmbiguousColumnException, self.process, s)
 
-		
+
 	def testOldJoinWithWhere(self):
 		s = """select * from t1, t2 where  t1.id1 = t2.id2;"""
 		res = self.process(s)
 
 		assert 't2.id2' not in self.ss.filters
-		
+
 	def testAnsiMixedJoin(self):
 		s = """select * from table1 t1, table2 t2 inner join table3 t3 on
 			t2.id2 = t3.id3
 			where t1.id1 = t2.id2"""
-			
+
 		res = self.process(s)
 
 		assert 't2.id2' not in self.ss.tableAliases
@@ -783,12 +783,12 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 't2' in self.ss.tableAliases['table2']
 		assert 'table3' in self.ss.tableAliases
 		assert 't3' in self.ss.tableAliases['table3']
-		
+
 	def testAnsiMixedJoinNotOrdered(self):
 		s = """select * from table1 t1, table2 t2 inner join table3 t3 on
 			t2.id2 = t3.id3, table4, table5 t5, table6
 			where t1.id1 = t2.id2"""
-			
+
 		res = self.process(s)
 
 		#same as previously
@@ -815,14 +815,14 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 'table4' in self.ss.tableAliases
 		assert 'table5' in self.ss.tableAliases
 		assert 't5' in self.ss.tableAliases['table5']
-		assert 'table4' in self.ss.tableAliases		
-		
-	def testAnsiJoinWithWhere(self):	
+		assert 'table4' in self.ss.tableAliases
+
+	def testAnsiJoinWithWhere(self):
 		# from SQLite test suite
 		s = """select * from t1 left join t2 on t1.b=t2.x and t1.c=1
-                     left join t3 on t1.b=t3.p where t1.c=2"""								
+                     left join t3 on t1.b=t3.p where t1.c=2"""
 		res = self.process(s)
-		
+
 		assert 't1' in self.ss.tableAliases
 		assert 't2' in self.ss.tableAliases
 		assert 't3' in self.ss.tableAliases
@@ -857,7 +857,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 't.b22' in self.ss.groups
 		assert 't.c33' in self.ss.groups
 		assert 't.d44' in self.ss.groups
-		
+
 		assert 'm99' not in self.ss.groups
 		assert 't.m99' not in self.ss.groups
 
@@ -869,21 +869,21 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 't.b22' in self.ss.columns
 		assert 't.c33' in self.ss.columns
 		assert 't.d44' in self.ss.columns
-		
+
 		assert 't.a11' in self.ss.orders
 		assert 't.b22' in self.ss.orders
-		
+
 		assert 'm99' not in self.ss.orders
 		assert 't.m99' not in self.ss.orders
-		
+
 	def testOrderByAlias(self):
 		s = 'select t1.m99 as zz from t1, t2 order by zz'
 		res = self.process(s)
 
-		assert 't1.m99' in self.ss.columns	
-			
+		assert 't1.m99' in self.ss.columns
+
 		assert 'm99' not in self.ss.orders
-		assert 't1.m99' not in self.ss.orders		
+		assert 't1.m99' not in self.ss.orders
 		assert 'zz' in self.ss.orders
 
 
@@ -921,7 +921,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 't.m99' in self.ss.columns
 		assert 't.m99' not in self.ss.aggregs
 		assert 't.m99' not in self.ss.groups
-		
+
 	def testSumGroupHaving(self):
 		s = 'select sum(a11) from t;'
 		res = self.process(s)
@@ -942,7 +942,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 't.c33' in self.ss.orders
 		assert 't.d44' in self.ss.columns
 		assert 't.d44' in self.ss.orders
-		
+
 	def testOrderBy(self):
 		s = 'select m99 from t order by "a11", t.b22 DESC, 10*sin(cos(c33)+d44)+3 DESC'
 		res = self.process(s)
@@ -954,14 +954,14 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 't.c33' in self.ss.columns
 		assert 't.c33' in self.ss.orders
 		assert 't.d44' in self.ss.columns
-		assert 't.d44' in self.ss.orders	
-	
+		assert 't.d44' in self.ss.orders
+
 	def testStarOrderBy(self):
 		s = 'SELECT * from t order by y'
 		res = self.process(s)
 
 		assert 't.y' in self.ss.columns
-		assert 't.y' in self.ss.orders		
+		assert 't.y' in self.ss.orders
 
 	def testFilter(self):
 		s = "select m99 from t where (a11 = 0 or a11 = 1 ) and " + \
@@ -995,7 +995,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		res = self.process(s)
 		assert 't.z' in self.ss.havings
 		assert "SUM(t.z)> 0" in self.ss.havings['t.z']
-		
+
 	def testSanityCheckTables(self):
 		s = "select m99 from unknown_table where (a11 = 0 or a11 = 1 ) and " + \
 			"  'qqq' = b.b22 and c33=pi();"
@@ -1008,7 +1008,7 @@ class SingleSelectTestCase(unittest.TestCase):
 			table --bla"""
 		res = self.process(s)
 		assert 'table.aa' in self.ss.columns
-		
+
 	def testMultilineComments(self):
 		s = """select aa /*, bb, cc,
 			dd */ from 
@@ -1020,7 +1020,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 'dd' not in self.ss.columns
 		assert 'a.cc' not in self.ss.columns
 		assert 'a.dd' not in self.ss.columns
-		
+
 	def testMultipleComments(self):
 		s = """select a.aa /*, bb, cc,
 			dd */ from 
@@ -1032,7 +1032,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 'dd' not in self.ss.columns
 		assert 'a.cc' not in self.ss.columns
 		assert 'a.dd' not in self.ss.columns
-		
+
 		assert 'table_a' in self.ss.tableAliases
 		assert 'a' in self.ss.tableAliases['table_a']
 		assert 'b' in self.ss.tableAliases
@@ -1045,7 +1045,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 'a.hahaha' not in self.ss.columns
 		assert 'b.hahaha' not in self.ss.columns
 		assert 'c.hahaha' not in self.ss.columns
-		
+
 	def testOraOuterJoins_l(self):
 		s = "select * from t1, t2 where  t1.id (+) = t2.id ;"
 		res = self.process(s)
@@ -1059,7 +1059,7 @@ class SingleSelectTestCase(unittest.TestCase):
 
 		assert "t1.id" in self.ss.joins
 		assert "T2.ID" in self.ss.joins
-		
+
 	def testFullOuterJoins_r(self):
 		s = "select * from t1 full outer join t2 on t1.id = t2.id"
 		res = self.process(s)
@@ -1089,7 +1089,7 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert "t.a" in self.ss.filters
 		assert "t.b" in self.ss.filters
 		assert "t.c" in self.ss.filters
-		
+
 	def testNotInClause(self):
 		s = ("select * from table t where t.a not in (111,222,333) "
 			"and t.b not in ('xxx', 'yyy') and t.c='a';" )
@@ -1102,7 +1102,7 @@ class SingleSelectTestCase(unittest.TestCase):
 	def testLIKE(self):
 		s = ("select table.* from table where table.a LIKE '%qqq%' " )
 		res = self.process(s)
-		
+
 		assert "table.a" in self.ss.filters
 		assert "like '%qqq%'" in self.ss.filters['table.a']
 		assert "table.*" in self.ss.columns
@@ -1110,10 +1110,10 @@ class SingleSelectTestCase(unittest.TestCase):
 	def testNotLIKE(self):
 		s = ("select table.* from table where table.a NoT liKE '%qqq%' " )
 		res = self.process(s)
-		
+
 		assert "table.a" in self.ss.filters
 		assert "not like '%qqq%'" in self.ss.filters['table.a']
-		
+
 	def testISNULL(self):
 		s = ("select table.* from table where table.a IS NulL " )
 		res = self.process(s)
@@ -1143,23 +1143,23 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert 'between_equal' not in res
 		assert 'table.between_equal' not in self.ss.columns
 		assert 'between_equal' not in self.ss.columns
-		
+
 	def _testExprBetween(self):
 		s = ("select table.* from table where a between 1 and f(3)" )
 		res = self.process(s)
 
 		assert 'table.a' in self.ss.filters
-		
+
 		assert 'between' not in self.ss.columns
 		assert 'table.between' not in self.ss.columns
 		assert 'between_equal' not in res
 		assert 'table.between_equal' not in self.ss.columns
 		assert 'between_equal' not in self.ss.columns
-		
+
 		assert '' in self.ss.filters['table.a']
 		assert "between_equal" in list(self.ss.filters['table.a'])[0]
 		assert "1 and " in list(self.ss.filters['table.a'])[0]
-		
+
 	def testNestedCaseWhenThen(self):
 		s = """SELECT
 		  aa, bb,
@@ -1175,26 +1175,26 @@ class SingleSelectTestCase(unittest.TestCase):
 			assert bad not in self.ss.columns
 			assert bad.upper() not in res
 			assert bad.upper() not in self.ss.columns
-			
+
 		assert 't.aa' in self.ss.columns
 		assert 't.bb' in self.ss.columns
 		assert 't.cc' in self.ss.columns
-		
+
 	def testCaseWhenFallTrhu(self):
 		s = "select case when a+b+c=0 then 'x' when a+b='0' then '0' end from t"
 		res = self.process(s)
-		
+
 		assert 't.a' in self.ss.columns
 		assert 't.b' in self.ss.columns
 		assert 't.c' in self.ss.columns
-		
+
 	def testaliasSingleSelect(self):
 		s = ("select * from table where a=1" )
 		res = self.process(s)
 
 		assert "table.a" in self.ss.filters
 		assert "= 1" in self.ss.filters['table.a']
-		
+
 	def testS0Columns(self):
 		s = "select a.s5 from a where a.s6='aaa' and a.s7='fff'"
 		res = self.process(s)
@@ -1202,37 +1202,37 @@ class SingleSelectTestCase(unittest.TestCase):
 		assert "s0" not in self.ss.columns
 		assert "s1" not in self.ss.columns
 		assert "a.s0" not in self.ss.columns
-		assert "a.s1" not in self.ss.columns	
-		
+		assert "a.s1" not in self.ss.columns
+
 	def testAmbiguousColumnException(self):
-		s = "select a from t1, t2"		
-		self.assertRaises(AmbiguousColumnException, self.process, s)	
-		
-		
+		s = "select a from t1, t2"
+		self.assertRaises(AmbiguousColumnException, self.process, s)
+
+
 	def testEmptyStringConst(self):
 		s = "SELECT IF (cu.active, 'active','') from cu"
 		res = self.process(s)
-		
+
 		assert 'if' not in self.ss.columns
 		assert 'IF' not in self.ss.columns
-		
+
 	def testDerivedTables(self):
 		#SimpleSelect handles only one SELECT, simulate the rest
 		s = "select w.a, t.b from [ 1 ] as w, t"
 		res = self.process(s)
-		
+
 		assert 'w' in self.ss.tableAliases
 		assert 'w' in self.ss.derivedTables
 		assert self.ss.derivedTables['w'] == 1
-		
+
 	def testSplitByCommasWihoutParens(self):
 		s = "a, b as bb, nvl(a,'b') as c, 1+f(1,1,1, g(2,2,2,d))+3 as d"
 		assert( len(splitByCommasWithoutParens(s))) == 4
 		assert ',' not in splitByCommasWithoutParens(s)[1]
-		
+
 		s = "b as bb"
 		assert splitByCommasWithoutParens(s) == ["b as bb"]
-		
+
 	def testAliasesBelongInTables(self):
 		s = "select a as aa, 2*t.b+4 as bb, sin(c) as cc, d, 3 as e from t;"
 		res = self.process(s)
@@ -1245,52 +1245,52 @@ class SingleSelectTestCase(unittest.TestCase):
 
 		#aa, bb, cc are displayed "a as aa"
 		assert 't.e' in self.ss.columns
-		
+
 	def testAliasesForMoreTables(self):
 		pass
-		
+
 	def testMultipleFrom(self):
 		s = "select a, b from t1 from t2;"
-		self.assertRaises(MallformedSQLException, self.process, s)		
-		
+		self.assertRaises(MallformedSQLException, self.process, s)
+
 	def testReservedWordsJoin(self):
 		s = "select * from t1 join t2 on t1.inner_1 = t2.left_2 join " + \
 			"t3 on t2.left_2 = t3.full_3"
 		res = self.process(s)
-		
+
 		assert 't1.inner_1' in self.ss.joins
 		assert 't2.left_2' in self.ss.joins
 		assert 't3.full_3' in self.ss.joins
 		assert len(self.ss.joins) == 3
-		
+
 	def testJoinWithExtraParens(self):
 		s = "select * from t1 join (t2 a2) on t1.x = a2.x join " + \
 			"(t3 a3) on a2.y = a3.y"
 		res = self.process(s)
-		
+
 		assert 't1.x' in self.ss.joins
 		assert 'a2.x' in self.ss.joins
 		assert 'a2.y' in self.ss.joins
-		assert 'a3.y' in self.ss.joins	
-		
+		assert 'a3.y' in self.ss.joins
+
 	def testCountStar(self):
 		s = "select count(*) from t1, t2;"
-		
+
 		# * is now a valid column, previously only t.* was ok
 		res = self.process(s)
-		
+
 	def testCountDistinct(self):
 		s = """SELECT count(distinct x) from t"""
 		res = self.process(s)
-		
+
 		assert 't.x)' not in self.ss.columns
-		
+
 	def testSelectDistinct(self):
 		s = """Select distinct a.id from a """
 		res = self.process(s)
-		
+
 		assert 'a.id' in self.ss.columns
-	
+
 	def testSubselectEdges(self):
 		s = """select fact.*, region.name, product.name
 			from fact,
@@ -1299,17 +1299,17 @@ class SingleSelectTestCase(unittest.TestCase):
 			where 
 				fact.region_id = region.id and
 				fact.product_id = product.id;"""
-				
+
 		res = self.process(s)
 		assert 'region' in self.ss.subselects
 		assert 'product' in self.ss.subselects
-		
+
 	def testGROUP_CONCAT2(self):
 		#this query is on the frontpage; embarrasing
 		s = """SELECT CONCAT(a, 2 + b) FROM t"""
-		
+
 		res = self.process(s)
-		
+
 		assert 'concat' not in self.ss.columns
 
 class DotOutputTestCase(unittest.TestCase):
@@ -1325,7 +1325,7 @@ class DotOutputTestCase(unittest.TestCase):
 					self.si.process(
 						self.qr.process(s)))
 		if verbose:
-			print '*'*5, self.si.process(self.qr.process(s))
+			print('*'*5, self.si.process(self.qr.process(s)))
 		return self.dot.process()[0]
 
 	def testSimple(self):
